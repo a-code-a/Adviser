@@ -1,0 +1,14 @@
+node_modules
+.next
+dist
+coverage
+.env
+.env.local
+.env.production
+.vercel
+playwright-report
+test-results
+worker-dist
+*.log
+*.tsbuildinfo
+package-lock.json
