@@ -26,6 +26,16 @@ export async function POST(_: Request, { params }: RefreshRouteProps) {
 
     return NextResponse.json({ ok: true }, { status: 202 });
   } catch (error) {
-    return NextResponse.json({ error: ensureErrorMessage(error) }, { status: 500 });
+    const message = ensureErrorMessage(error);
+    const status =
+      message === "Refresh cooldown is still active"
+        ? 429
+        : message === "Listing not found"
+          ? 404
+          : message === "Unauthorized"
+            ? 401
+            : 500;
+
+    return NextResponse.json({ error: message }, { status });
   }
 }

@@ -20,6 +20,9 @@ const monoFont = IBM_Plex_Mono({
 
 export const metadata: Metadata = {
   description: "AI-assisted marketplace intelligence for eBay and Kleinanzeigen listings.",
+  icons: {
+    icon: "/favicon.ico"
+  },
   title: "Marketplace Advisor"
 };
 
