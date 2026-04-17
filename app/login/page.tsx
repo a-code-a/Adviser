@@ -16,8 +16,8 @@ export default async function LoginPage() {
       <section className="panel stack gap-sm">
         <h1>Supabase is not configured yet</h1>
         <p className="muted">
-          Add `NEXT_PUBLIC_SUPABASE_URL` and `NEXT_PUBLIC_SUPABASE_ANON_KEY` to enable magic-link
-          sign in.
+          Add `NEXT_PUBLIC_SUPABASE_URL` and `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY` to enable
+          magic-link sign in.
         </p>
       </section>
     );
