@@ -1,3 +1,5 @@
+import "./load-env";
+
 import { createServer } from "node:http";
 
 import { buildHashEmbedding } from "./embedding";

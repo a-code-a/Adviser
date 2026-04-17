@@ -157,7 +157,7 @@ create table public.analysis_reports (
   id uuid primary key default gen_random_uuid(),
   listing_id uuid not null references public.crawl_targets (id) on delete cascade,
   user_id uuid not null references public.users (id) on delete cascade,
-  model_slug text not null default 'openai/gpt-5-mini',
+  model_slug text not null default 'google/gemini-3-flash-preview',
   rendered_summary text,
   report_json jsonb not null,
   token_usage_input integer not null default 0,
@@ -588,7 +588,8 @@ returns table (
   read_ct bigint,
   enqueued_at timestamptz,
   vt timestamptz,
-  message jsonb
+  message jsonb,
+  headers jsonb
 )
 language sql
 security definer
@@ -648,7 +649,8 @@ returns table (
   newest_msg_age_sec integer,
   oldest_msg_age_sec integer,
   total_messages bigint,
-  scrape_time timestamptz
+  scrape_time timestamptz,
+  queue_visible_length bigint
 )
 language sql
 security definer
@@ -798,7 +800,7 @@ insert into public.ai_model_configs (
 )
 values (
   'analysis_default',
-  'openai/gpt-5-mini',
+  'google/gemini-3-flash-preview',
   'listing_analysis',
   true,
   0.2,

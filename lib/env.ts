@@ -7,13 +7,14 @@ const environmentSchema = z.object({
   KLEINANZEIGEN_PROXY_URL: z.string().optional(),
   NEXT_PUBLIC_APP_URL: z.string().url().default("http://localhost:3000"),
   NEXT_PUBLIC_SUPABASE_ANON_KEY: z.string().optional(),
+  NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY: z.string().optional(),
   NEXT_PUBLIC_SUPABASE_URL: z.string().url().optional(),
   OPENROUTER_API_KEY: z.string().optional(),
   OPENROUTER_ENABLE_WEB_SEARCH: z
     .enum(["true", "false"])
     .optional()
     .transform((value) => value !== "false"),
-  OPENROUTER_MODEL_ANALYSIS: z.string().default("openai/gpt-5-mini"),
+  OPENROUTER_MODEL_ANALYSIS: z.string().default("google/gemini-3-flash-preview"),
   SUPABASE_SERVICE_ROLE_KEY: z.string().optional(),
   WORKER_AUTH_TOKEN: z.string().optional()
 });
@@ -22,9 +23,13 @@ export function readEnvironment() {
   return environmentSchema.parse(process.env);
 }
 
+export function getSupabasePublishableKey(env = readEnvironment()) {
+  return env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY ?? env.NEXT_PUBLIC_SUPABASE_ANON_KEY ?? null;
+}
+
 export function hasSupabaseBrowserConfig() {
   const env = readEnvironment();
-  return Boolean(env.NEXT_PUBLIC_SUPABASE_URL && env.NEXT_PUBLIC_SUPABASE_ANON_KEY);
+  return Boolean(env.NEXT_PUBLIC_SUPABASE_URL && getSupabasePublishableKey(env));
 }
 
 export function requireServerEnv<K extends keyof ReturnType<typeof readEnvironment>>(key: K) {

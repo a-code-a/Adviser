@@ -32,7 +32,7 @@ export default async function RootLayout({
 
   return (
     <html className={`${headlineFont.variable} ${monoFont.variable}`} lang="en">
-      <body>
+      <body suppressHydrationWarning>
         <div className="page-shell">
           <header className="site-header">
             <Link className="brand" href="/">

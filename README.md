@@ -22,10 +22,10 @@ Copy `.env.example` to `.env.local` for the web app and provide the same server-
 ```bash
 NEXT_PUBLIC_APP_URL=http://localhost:3000
 NEXT_PUBLIC_SUPABASE_URL=
-NEXT_PUBLIC_SUPABASE_ANON_KEY=
+NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY=
 SUPABASE_SERVICE_ROLE_KEY=
 OPENROUTER_API_KEY=
-OPENROUTER_MODEL_ANALYSIS=openai/gpt-5-mini
+OPENROUTER_MODEL_ANALYSIS=google/gemini-3-flash-preview
 OPENROUTER_ENABLE_WEB_SEARCH=true
 EBAY_BROWSE_API_TOKEN=
 EBAY_BROWSE_MARKETPLACE_ID=EBAY_DE
@@ -85,3 +85,4 @@ curl -X POST http://localhost:8080/cron/refresh-tracked
 - eBay uses Browse API when a token is present, then falls back to HTML parsing.
 - Kleinanzeigen uses Playwright and should be operated behind conservative throttles, auditing, and source controls.
 - OpenRouter analysis falls back to a deterministic heuristic report if the API key is not configured or the model call fails.
+- As of April 17, 2026, the configured Gemini analysis slug is `google/gemini-3-flash-preview` on OpenRouter.
