@@ -1,5 +1,7 @@
 import "server-only";
 
+import { analyzeBundle } from "@/lib/ai/listing-analysis";
+import { type NormalizedComparable } from "@/lib/core/marketplaces";
 import { ensureMarketplaceUrl } from "@/lib/core/marketplaces";
 import { ensureErrorMessage } from "@/lib/utils";
 import { createSupabaseServiceClient } from "@/lib/supabase/service";
@@ -29,7 +31,16 @@ export interface DashboardData {
 }
 
 export interface ListingDetailData {
+  comparables: Record<string, any>[];
   listing: Record<string, any> | null;
+  latestSnapshot: Record<string, any> | null;
+  parserSignals: Record<string, any>;
+  refreshState: {
+    cooldownHours: number;
+    isCoolingDown: boolean;
+    lastRequestedAt: string | null;
+    nextAllowedAt: string | null;
+  };
   report: Record<string, any> | null;
   seller: Record<string, any> | null;
   target: Record<string, any> | null;
@@ -38,6 +49,22 @@ export interface ListingDetailData {
 
 function requireConfiguredSupabase() {
   return createSupabaseServerClient();
+}
+
+function mapComparableRows(rows: Array<Record<string, any>>) {
+  return rows.map(
+    (row) =>
+      ({
+        condition: row.condition ?? "unknown",
+        currency: row.currency ?? "EUR",
+        marketplace: row.source_marketplace ?? "kleinanzeigen",
+        priceAmount: Number(row.price_amount ?? 0),
+        similarityScore: Number(row.similarity_score ?? 0),
+        source: row.metadata?.source === "live" ? "live" : "internal",
+        title: row.title ?? "Comparable listing",
+        url: row.source_url ?? ""
+      }) satisfies NormalizedComparable
+  );
 }
 
 export async function getDashboardData(userId: string): Promise<DashboardData> {
@@ -131,7 +158,7 @@ export async function getDashboardData(userId: string): Promise<DashboardData> {
 export async function getListingDetail(userId: string, listingId: string): Promise<ListingDetailData> {
   const supabase = await requireConfiguredSupabase();
 
-  const [{ data: trackedListing }, { data: target }, { data: listing }, { data: report }] = await Promise.all([
+  const [{ data: trackedListing }, { data: target }, { data: listing }, { data: report }, { data: quota }] = await Promise.all([
     supabase
       .from("tracked_listings")
       .select("*")
@@ -147,12 +174,22 @@ export async function getListingDetail(userId: string, listingId: string): Promi
       .eq("listing_id", listingId)
       .order("created_at", { ascending: false })
       .limit(1)
-      .maybeSingle()
+      .maybeSingle(),
+    supabase.from("user_quotas").select("refresh_cooldown_hours").eq("user_id", userId).maybeSingle()
   ]);
 
   if (!trackedListing) {
     return {
+      comparables: [],
       listing: null,
+      latestSnapshot: null,
+      parserSignals: {},
+      refreshState: {
+        cooldownHours: quota?.refresh_cooldown_hours ?? 6,
+        isCoolingDown: false,
+        lastRequestedAt: null,
+        nextAllowedAt: null
+      },
       report: null,
       seller: null,
       target: null,
@@ -160,15 +197,42 @@ export async function getListingDetail(userId: string, listingId: string): Promi
     };
   }
 
-  const [{ data: seller }, { data: images }] = await Promise.all([
+  const [{ data: seller }, { data: images }, { data: latestSnapshot }, { data: comparables }] = await Promise.all([
     listing?.seller_profile_id
       ? supabase.from("seller_profiles").select("*").eq("id", listing.seller_profile_id).maybeSingle()
       : Promise.resolve({ data: null } as const),
-    supabase.from("listing_images").select("*").eq("listing_id", listingId).order("position")
+    supabase.from("listing_images").select("*").eq("listing_id", listingId).order("position"),
+    listing?.latest_snapshot_id
+      ? supabase
+          .from("listing_snapshots")
+          .select("id, parser_signals, parser_version, scraped_at, source_url")
+          .eq("id", listing.latest_snapshot_id)
+          .maybeSingle()
+      : Promise.resolve({ data: null } as const),
+    supabase
+      .from("comparables")
+      .select("*")
+      .eq("listing_id", listingId)
+      .order("similarity_score", { ascending: false })
   ]);
+  const cooldownHours = quota?.refresh_cooldown_hours ?? 6;
+  const lastRequestedAt = trackedListing.last_refresh_requested_at ?? null;
+  const nextAllowedAt = lastRequestedAt
+    ? new Date(new Date(lastRequestedAt).getTime() + cooldownHours * 60 * 60 * 1000).toISOString()
+    : null;
+  const isCoolingDown = nextAllowedAt ? new Date(nextAllowedAt).getTime() > Date.now() : false;
 
   return {
+    comparables: comparables ?? [],
     listing: listing ? { ...listing, listing_images: images ?? [] } : null,
+    latestSnapshot,
+    parserSignals: latestSnapshot?.parser_signals ?? {},
+    refreshState: {
+      cooldownHours,
+      isCoolingDown,
+      lastRequestedAt,
+      nextAllowedAt
+    },
     report,
     seller,
     target,
@@ -187,6 +251,51 @@ export async function getReport(userId: string, reportId: string) {
     .maybeSingle();
 
   return data;
+}
+
+export async function regenerateAnalysisForViewer(userId: string, listingId: string) {
+  const detail = await getListingDetail(userId, listingId);
+
+  if (!detail.trackedListing || !detail.listing) {
+    throw new Error("Listing not found");
+  }
+
+  const analysis = await analyzeBundle({
+    comparables: mapComparableRows(detail.comparables),
+    images: Array.isArray(detail.listing.listing_images) ? detail.listing.listing_images : [],
+    listing: detail.listing,
+    parserSignals: detail.parserSignals,
+    seller: detail.seller,
+    snapshot: detail.latestSnapshot,
+    target: detail.target
+  });
+
+  const serviceSupabase = createSupabaseServiceClient();
+  const { data, error } = await serviceSupabase
+    .from("analysis_reports")
+    .insert({
+      created_at: new Date().toISOString(),
+      listing_id: listingId,
+      model_slug: analysis.report.modelSlug,
+      rendered_summary: analysis.report.summary,
+      report_json: analysis.report,
+      token_usage_input: analysis.usage.inputTokens,
+      token_usage_output: analysis.usage.outputTokens,
+      updated_at: new Date().toISOString(),
+      user_id: userId,
+      web_search_requests: analysis.usage.webSearchRequests
+    })
+    .select("*")
+    .single();
+
+  if (error) {
+    throw new Error(error.message);
+  }
+
+  return {
+    analysis,
+    report: data
+  };
 }
 
 export async function importListingForViewer(userId: string, sourceUrl: string) {

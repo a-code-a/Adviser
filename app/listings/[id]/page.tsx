@@ -5,6 +5,8 @@ import { hasSupabaseBrowserConfig } from "@/lib/env";
 import { requireViewer } from "@/lib/server/auth";
 import { getListingDetail } from "@/lib/server/data";
 import { formatCurrency, formatDate } from "@/lib/utils";
+import { AnalysisActions } from "@/components/listings/analysis-actions";
+import { LiveListingStatus } from "@/components/listings/live-status";
 import { ListingActions } from "@/components/listings/listing-actions";
 import { StatusPill } from "@/components/common/status-pill";
 
@@ -49,6 +51,22 @@ function verdictIntent(value: string | null | undefined): "danger" | "neutral" |
   return "danger";
 }
 
+function generationIntent(value: string | null | undefined): "danger" | "neutral" | "success" | "warning" {
+  if (!value) {
+    return "neutral";
+  }
+
+  return value === "model" ? "success" : "warning";
+}
+
+function recommendedActionLabel(value: string | null | undefined) {
+  if (!value) {
+    return "No action";
+  }
+
+  return value.replaceAll("_", " ");
+}
+
 function attributeEntriesFromListing(listing: Record<string, any> | null) {
   return Object.entries((listing?.attributes ?? {}) as Record<string, unknown>)
     .map(([key, value]) => [key, typeof value === "string" ? value.trim() : String(value ?? "").trim()] as const)
@@ -90,6 +108,8 @@ export default async function ListingPage({ params }: ListingPageProps) {
     : [];
   const comparableItems = Array.isArray(report?.comparableItems) ? report.comparableItems : [];
   const citations = Array.isArray(report?.citations) ? report.citations : [];
+  const negotiationAdvice = Array.isArray(report?.negotiationAdvice) ? report.negotiationAdvice : [];
+  const parserWarnings = Array.isArray(detail.parserSignals?.warnings) ? detail.parserSignals.warnings : [];
   const heroImage = images[0] ?? null;
   const quickFacts = [
     {
@@ -130,6 +150,20 @@ export default async function ListingPage({ params }: ListingPageProps) {
 
   return (
     <div className="listing-shell stack gap-lg">
+      <LiveListingStatus
+        initialSnapshot={{
+          generationMode: report?.generationMode ?? null,
+          hasListing: Boolean(listing),
+          hasReport: Boolean(detail.report?.id),
+          lastCrawledAt: detail.target?.last_crawled_at ?? null,
+          lastError: detail.target?.last_error ?? null,
+          reportId: detail.report?.id ?? null,
+          targetStatus: detail.target?.status ?? null,
+          trackingState: detail.trackedListing?.tracking_state ?? null
+        }}
+        listingId={id}
+      />
+
       <section className="listing-hero-grid">
         <article className="panel listing-gallery-card stack gap-sm">
           {heroImage ? (
@@ -192,7 +226,11 @@ export default async function ListingPage({ params }: ListingPageProps) {
               ))}
             </div>
 
-            <ListingActions listingId={id} trackingState={detail.trackedListing?.tracking_state} />
+            <ListingActions
+              listingId={id}
+              refreshState={detail.refreshState}
+              trackingState={detail.trackedListing?.tracking_state}
+            />
           </article>
 
           <aside className="panel seller-card stack gap-sm">
@@ -273,11 +311,14 @@ export default async function ListingPage({ params }: ListingPageProps) {
       <section className="stack gap-md">
         <div className="row space-between baseline wrap">
           <h2>Analysis report</h2>
-          {detail.report?.id ? (
-            <Link className="button button--ghost" href={`/api/reports/${detail.report.id}`}>
-              Raw JSON
-            </Link>
-          ) : null}
+          <div className="row gap-sm wrap">
+            {detail.report?.id ? (
+              <Link className="button button--ghost" href={`/api/reports/${detail.report.id}`}>
+                Raw JSON
+              </Link>
+            ) : null}
+            <AnalysisActions listingId={id} />
+          </div>
         </div>
 
         {!report ? (
@@ -292,8 +333,21 @@ export default async function ListingPage({ params }: ListingPageProps) {
         ) : (
           <div className="grid-two report-grid">
             <article className="panel stack gap-sm">
+              <div className="row gap-xs wrap">
+                <StatusPill intent={generationIntent(report.generationMode)} label={report.generationMode ?? "unknown"} />
+                {report?.recommendedAction ? (
+                  <StatusPill intent={verdictIntent(report.priceVerdict)} label={recommendedActionLabel(report.recommendedAction)} />
+                ) : null}
+              </div>
+              {report?.modelSlug ? <p className="muted">Model: {report.modelSlug}</p> : null}
               <h3>{report.summary}</h3>
+              <p>{report.priceAssessment}</p>
               <p className="muted">{report.sellerAssessment}</p>
+              {report.generationMode === "fallback" ? (
+                <div className="analysis-callout analysis-callout--warning">
+                  Gemini did not complete cleanly for this saved report, so the UI is showing the structured fallback analysis instead.
+                </div>
+              ) : null}
               <div className="metric-grid">
                 <div>
                   <strong>{report.riskScore}/100</strong>
@@ -312,6 +366,44 @@ export default async function ListingPage({ params }: ListingPageProps) {
                   <span>Fair range max</span>
                 </div>
               </div>
+            </article>
+
+            <article className="panel stack gap-sm">
+              <h3>AI context used</h3>
+              <div className="detail-list">
+                <div className="detail-row">
+                  <span className="detail-key">Snapshot time</span>
+                  <strong className="detail-value">{formatRawDate(detail.latestSnapshot?.scraped_at ?? null)}</strong>
+                </div>
+                <div className="detail-row">
+                  <span className="detail-key">Extraction strategy</span>
+                  <strong className="detail-value">{detail.parserSignals?.extractionStrategy ?? "Unknown"}</strong>
+                </div>
+                <div className="detail-row">
+                  <span className="detail-key">Images passed to model</span>
+                  <strong className="detail-value">{images.length}</strong>
+                </div>
+                <div className="detail-row">
+                  <span className="detail-key">Comparable candidates stored</span>
+                  <strong className="detail-value">{detail.comparables.length}</strong>
+                </div>
+                <div className="detail-row">
+                  <span className="detail-key">Comparable items cited</span>
+                  <strong className="detail-value">{comparableItems.length}</strong>
+                </div>
+              </div>
+              {parserWarnings.length > 0 ? (
+                <div className="stack gap-sm">
+                  <h4>Parser warnings</h4>
+                  <ul className="plain-list">
+                    {parserWarnings.map((warning: string) => (
+                      <li key={warning}>{warning}</li>
+                    ))}
+                  </ul>
+                </div>
+              ) : (
+                <p className="muted">No parser warnings were attached to the latest normalized snapshot.</p>
+              )}
             </article>
 
             <article className="panel stack gap-sm">
@@ -339,6 +431,20 @@ export default async function ListingPage({ params }: ListingPageProps) {
                   <li key={item}>{item}</li>
                 ))}
               </ul>
+            </article>
+
+            <article className="panel stack gap-sm">
+              <h3>Negotiation advice</h3>
+              <ul className="plain-list">
+                {negotiationAdvice.map((item: string) => (
+                  <li key={item}>{item}</li>
+                ))}
+              </ul>
+            </article>
+
+            <article className="panel stack gap-sm">
+              <h3>Seller message draft</h3>
+              <p className="text-pretty">{report.sellerMessageDraft}</p>
             </article>
           </div>
         )}

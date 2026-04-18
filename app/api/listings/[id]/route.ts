@@ -28,7 +28,11 @@ export async function GET(_: Request, { params }: ListingRouteProps) {
       return NextResponse.json({ error: "Listing not found." }, { status: 404 });
     }
 
-    return NextResponse.json(detail);
+    return NextResponse.json(detail, {
+      headers: {
+        "Cache-Control": "no-store"
+      }
+    });
   } catch (error) {
     return NextResponse.json({ error: ensureErrorMessage(error) }, { status: 500 });
   }

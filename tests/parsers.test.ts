@@ -183,6 +183,86 @@ const kleinanzeigenDomFixture = `
 </html>
 `;
 
+const kleinanzeigenPayloadMatchFixture = `
+<!doctype html>
+<html lang="de">
+  <head>
+    <title>Audi Q3 F3 2019 S-Line 45 TFSI 230Ps Quattro</title>
+    <meta property="og:title" content="Audi Q3 F3 2019 S-Line 45 TFSI 230Ps Quattro" />
+    <meta property="og:locality" content="71397 Leutenbach" />
+    <script id="__NEXT_DATA__" type="application/json">
+      {
+        "props": {
+          "pageProps": {
+            "related": [
+              {
+                "adId": 3364655734,
+                "title": "Audi A3 35 TDI Limousine S tronic S line 8-fach",
+                "price": {
+                  "amount": 25.9
+                },
+                "url": "/s-anzeige/audi-a3-35-tdi-limousine-s-tronic-s-line-8-fach/3364655734-216-8266"
+              }
+            ],
+            "ad": {
+              "adId": 3347173880,
+              "title": "Audi Q3 F3 2019 S-Line 45 TFSI 230Ps Quattro",
+              "description": "Mein neues Fahrzeug kommt bald.",
+              "price": {
+                "amount": 28000
+              },
+              "seller": {
+                "id": 3934622,
+                "name": "AP"
+              },
+              "url": "/s-anzeige/audi-q3-f3-2019-s-line-45-tfsi-230ps-quattro/3347173880-216-8473"
+            }
+          }
+        }
+      }
+    </script>
+    <script>
+      window.BelenConf = {
+        universalAnalyticsOpts: {
+          dimensions: {
+            ad_seller_type: "Private"
+          }
+        }
+      };
+      const config = {
+        adCreationDate: "09.03.2026"
+      };
+      const payload = {
+        "%DFP_TARGETS%": {
+          "Marke": "audi",
+          "Modell": "q3",
+          "Kilometerstand": "89500",
+          "Leistung": "230",
+          "Kraftstoffart": "benzin",
+          "Erstzulassungsjahr": "2019",
+          "Erstzulassungsmonat": "3",
+          "HU_Jahr": "2027",
+          "HU_Monat": "2"
+        }
+      };
+    </script>
+  </head>
+  <body>
+    <main>
+      <div id="viewad-description-text">Besichtigung und Probefahrt nach Absprache möglich.</div>
+      <aside id="viewad-profile-box">
+        <h2>AP</h2>
+        <p>Mitglied seit 2019</p>
+        <p>Privatanbieter</p>
+      </aside>
+      <article id="viewad-product">
+        <img src="https://images.example.com/q3.jpg" alt="Audi Q3" />
+      </article>
+    </main>
+  </body>
+</html>
+`;
+
 describe("marketplace normalization", () => {
   it("detects and normalizes supported URLs", () => {
     const ebay = ensureMarketplaceUrl("https://www.ebay.de/itm/123456789012?_trkparms=test");
@@ -237,7 +317,25 @@ describe("HTML parsers", () => {
     expect(result.seller.memberSinceText).toContain("2019");
     expect(result.images).toHaveLength(2);
     expect(result.listing.publishedAt).toContain("2026-03-09");
-    expect(result.parserSignals.extractionStrategy).toBe("dom");
+    expect(result.parserSignals.extractionStrategy).toBe("dom+meta");
+  });
+
+  it("matches the exact Kleinanzeigen ad in payloads with misleading related items", () => {
+    const result = parseKleinanzeigenHtml(
+      kleinanzeigenPayloadMatchFixture,
+      "https://www.kleinanzeigen.de/s-anzeige/audi-q3-f3-2019-s-line-45-tfsi-230ps-quattro/3347173880-216-8473"
+    );
+
+    expect(result.listing.title).toContain("Audi Q3");
+    expect(result.listing.priceAmount).toBe(28000);
+    expect(result.listing.externalId).toBe("3347173880");
+    expect(result.listing.locationText).toBe("71397 Leutenbach");
+    expect(result.listing.attributes.Marke).toBe("audi");
+    expect(result.listing.attributes.Modell).toBe("q3");
+    expect(result.listing.attributes.Erstzulassung).toBe("03/2019");
+    expect(result.listing.attributes.HU).toBe("2/2027");
+    expect(result.seller.externalSellerId).toBe("3934622");
+    expect(result.parserSignals.extractionStrategy).toBe("next_data+dom+meta");
   });
 });
 
@@ -262,15 +360,22 @@ describe("analysis schema", () => {
         max: 350,
         min: 300
       },
+      generationMode: "model",
+      modelSlug: "google/gemini-3-flash-preview",
+      negotiationAdvice: ["Start below ask and use any missing paperwork as leverage."],
+      priceAssessment: "Recent comparable listings suggest the ask is within a normal range.",
       priceVerdict: "fair",
       questionsToAsk: ["Any defects or repairs?"],
       redFlags: ["No invoice mentioned."],
+      recommendedAction: "negotiate",
       riskScore: 41,
       sellerAssessment: "Seller profile looks decent but not deeply verified.",
+      sellerMessageDraft: "Hi, can you share the invoice and a few fresh photos?",
       summary: "The listing is roughly aligned with recent comparables.",
       thingsToCheck: ["Request close-up photos of the wear areas."]
     });
 
+    expect(parsed.generationMode).toBe("model");
     expect(parsed.priceVerdict).toBe("fair");
     expect(parsed.estimatedFairRange.max).toBe(350);
   });

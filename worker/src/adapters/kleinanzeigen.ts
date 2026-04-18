@@ -85,6 +85,67 @@ function firstRegexCapture(html: string, patterns: RegExp[]) {
   return null;
 }
 
+function extractJsonObjectAfterMarker(html: string, marker: string) {
+  const markerIndex = html.indexOf(marker);
+
+  if (markerIndex < 0) {
+    return null;
+  }
+
+  const objectStart = html.indexOf("{", markerIndex + marker.length);
+  if (objectStart < 0) {
+    return null;
+  }
+
+  let inString = false;
+  let escapeNext = false;
+  let depth = 0;
+
+  for (let index = objectStart; index < html.length; index += 1) {
+    const character = html[index];
+
+    if (escapeNext) {
+      escapeNext = false;
+      continue;
+    }
+
+    if (character === "\\") {
+      escapeNext = true;
+      continue;
+    }
+
+    if (character === "\"") {
+      inString = !inString;
+      continue;
+    }
+
+    if (inString) {
+      continue;
+    }
+
+    if (character === "{") {
+      depth += 1;
+      continue;
+    }
+
+    if (character === "}") {
+      depth -= 1;
+
+      if (depth === 0) {
+        const candidate = html.slice(objectStart, index + 1);
+
+        try {
+          return JSON.parse(candidate) as Record<string, any>;
+        } catch {
+          return null;
+        }
+      }
+    }
+  }
+
+  return null;
+}
+
 function textFromSelectors($: ReturnType<typeof load>, selectors: string[]) {
   for (const selector of selectors) {
     const value = cleanInlineText($(selector).first().text());
@@ -157,6 +218,82 @@ function parseScopedJsonLd($: ReturnType<typeof load>, containerSelector: string
   return results;
 }
 
+function formatAnalyticsAttributeKey(key: string) {
+  return key
+    .replaceAll("_", " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function formatAnalyticsAttributeValue(value: unknown) {
+  if (value == null) {
+    return null;
+  }
+
+  if (typeof value === "boolean") {
+    return value ? "Ja" : null;
+  }
+
+  const normalized = cleanInlineText(String(value));
+  if (!normalized || normalized === "false" || normalized === "--") {
+    return null;
+  }
+
+  return normalized === "true" ? "Ja" : normalized;
+}
+
+function extractAnalyticsAttributes(html: string) {
+  const analyticsObject =
+    extractJsonObjectAfterMarker(html, "\"%DFP_TARGETS%\":") ??
+    extractJsonObjectAfterMarker(html, "\"%BIDDER_CUSTOM_PARAMS%\":");
+
+  if (!analyticsObject) {
+    return {};
+  }
+
+  const ignoredKeys = new Set([
+    "Angebotstyp",
+    "ExactPreis",
+    "Preis",
+    "Verkaeufer"
+  ]);
+  const attributes: Record<string, string> = {};
+
+  for (const [rawKey, rawValue] of Object.entries(analyticsObject)) {
+    if (!rawKey || rawKey[0] !== rawKey[0]?.toUpperCase() || ignoredKeys.has(rawKey)) {
+      continue;
+    }
+
+    const normalizedValue = formatAnalyticsAttributeValue(rawValue);
+    if (!normalizedValue) {
+      continue;
+    }
+
+    assignAttribute(attributes, formatAnalyticsAttributeKey(rawKey), normalizedValue);
+  }
+
+  const registrationYear = formatAnalyticsAttributeValue(analyticsObject.Erstzulassungsjahr);
+  const registrationMonth = formatAnalyticsAttributeValue(analyticsObject.Erstzulassungsmonat);
+  const inspectionYear = formatAnalyticsAttributeValue(analyticsObject.HU_Jahr);
+  const inspectionMonth = formatAnalyticsAttributeValue(analyticsObject.HU_Monat);
+
+  if (registrationYear) {
+    const registrationValue = registrationMonth
+      ? `${String(registrationMonth).padStart(2, "0")}/${registrationYear}`
+      : registrationYear;
+    assignAttribute(attributes, "Erstzulassung", registrationValue);
+  }
+
+  if (inspectionYear) {
+    const inspectionValue = inspectionMonth
+      ? `${inspectionMonth}/${inspectionYear}`
+      : inspectionYear;
+    assignAttribute(attributes, "HU", inspectionValue);
+  }
+
+  return attributes;
+}
+
 function asAbsoluteKleinanzeigenUrl(value: string | null | undefined) {
   if (!value) {
     return null;
@@ -167,6 +304,14 @@ function asAbsoluteKleinanzeigenUrl(value: string | null | undefined) {
   } catch {
     return null;
   }
+}
+
+function urlMatchesExternalId(value: string | null | undefined, externalId: string | null) {
+  if (!value || !externalId) {
+    return false;
+  }
+
+  return value.includes(`/${externalId}`) || value.includes(`-${externalId}-`);
 }
 
 function parsePublishedAt(value: string | null | undefined) {
@@ -438,36 +583,123 @@ function extractNextData(html: string) {
   }
 }
 
-function findLikelyListingNode(input: unknown): Record<string, any> | null {
-  if (!input || typeof input !== "object") {
+function scoreLikelyListingNode(
+  record: Record<string, any>,
+  path: string[],
+  expectedExternalId: string | null,
+  sourceUrl: string
+) {
+  const title = pickFirstString(record.title, record.headline, record.name);
+  const candidateId = pickFirstString(
+    record.adId?.toString?.(),
+    record.id?.toString?.(),
+    record.externalId?.toString?.()
+  );
+  const candidateUrl = asAbsoluteKleinanzeigenUrl(
+    record.url ?? record.viewAdUrl ?? record.link ?? record.canonicalUrl
+  );
+  const pathHint = path.join(".");
+  let score = 0;
+
+  if (title) {
+    score += 2;
+  }
+
+  if (candidateId || candidateUrl) {
+    score += 2;
+  }
+
+  if (record.description) {
+    score += 1.2;
+  }
+
+  if (record.price) {
+    score += 1.2;
+  }
+
+  if (record.seller) {
+    score += 1.2;
+  }
+
+  if (Array.isArray(record.images) && record.images.length > 0) {
+    score += 1;
+  }
+
+  if (record.location || record.adLocation) {
+    score += 1;
+  }
+
+  if (/pageprops|(^|\.)(ad|listing|viewad|vip)(\.|$)/i.test(pathHint)) {
+    score += 3;
+  }
+
+  if (candidateUrl === sourceUrl) {
+    score += 12;
+  }
+
+  if (expectedExternalId && candidateId === expectedExternalId) {
+    score += 14;
+  }
+
+  if (urlMatchesExternalId(candidateUrl, expectedExternalId)) {
+    score += 10;
+  }
+
+  return score;
+}
+
+interface LikelyListingMatch {
+  node: Record<string, any>;
+  score: number;
+}
+
+function findLikelyListingNode(
+  input: unknown,
+  options: {
+    expectedExternalId: string | null;
+    sourceUrl: string;
+  }
+): Record<string, any> | null {
+  let bestMatch: LikelyListingMatch | null = null;
+
+  function visit(value: unknown, path: string[]) {
+    if (!value || typeof value !== "object") {
+      return;
+    }
+
+    if (Array.isArray(value)) {
+      value.forEach((item, index) => visit(item, [...path, String(index)]));
+      return;
+    }
+
+    const record = value as Record<string, any>;
+    const score = scoreLikelyListingNode(
+      record,
+      path,
+      options.expectedExternalId,
+      options.sourceUrl
+    );
+
+    if (score >= 4 && (!bestMatch || score > bestMatch.score)) {
+      bestMatch = {
+        node: record,
+        score
+      };
+    }
+
+    Object.entries(record).forEach(([key, childValue]) => {
+      visit(childValue, [...path, key]);
+    });
+  }
+
+  visit(input, []);
+  const resolvedMatch = bestMatch as LikelyListingMatch | null;
+
+  if (!resolvedMatch) {
     return null;
   }
 
-  if (Array.isArray(input)) {
-    for (const item of input) {
-      const result = findLikelyListingNode(item);
-      if (result) {
-        return result;
-      }
-    }
-
-    return null;
-  }
-
-  const record = input as Record<string, any>;
-
-  if ((record.title || record.headline) && (record.adId || record.id || record.viewAdUrl || record.price)) {
-    return record;
-  }
-
-  for (const value of Object.values(record)) {
-    const result = findLikelyListingNode(value);
-    if (result) {
-      return result;
-    }
-  }
-
-  return null;
+  return resolvedMatch.node;
 }
 
 function extractLikelySearchItems(input: unknown, limit = DEFAULT_WEB_SEARCH_MAX_RESULTS): NormalizedComparable[] {
@@ -541,19 +773,36 @@ async function fetchWithBrowser(url: string) {
 export function parseKleinanzeigenHtml(html: string, sourceUrl: string): ScrapeListingResult {
   detectBlockedHtml(html);
   const nextData = extractNextData(html);
-  const listingNode = findLikelyListingNode(nextData);
+  const expectedExternalId = extractExternalId(sourceUrl, "kleinanzeigen");
+  const listingNode = findLikelyListingNode(nextData, {
+    expectedExternalId,
+    sourceUrl
+  });
   const $ = load(html);
   const scopedJsonLd = parseScopedJsonLd($, "#viewad-product");
+  const analyticsAttributes = extractAnalyticsAttributes(html);
+  const analyticsCategoryPath = dedupeStrings([
+    firstRegexCapture(html, [/"l1_category_name":"([^"]+)"/i]),
+    firstRegexCapture(html, [/"l2_category_name":"([^"]+)"/i]),
+    firstRegexCapture(html, [/"l3_category_name":"([^"]+)"/i]),
+    firstRegexCapture(html, [/category:\s*'([^']+)'/i])
+  ]);
   const jsonLdTitle = pickFirstString(...scopedJsonLd.map((item) => item.title ?? item.name));
   const jsonLdDescription = pickLongestString(...scopedJsonLd.map((item) => item.description));
   const domDescription = textWithBreaksFromSelectors($, ["#viewad-description-text", "[data-testid='vip-description-text']"]);
   const title =
     pickFirstString(
-      textFromSelectors($, ["#viewad-title", "main h1", "h1"]),
       listingNode?.title,
       listingNode?.headline,
+      $("meta[property='og:title']").attr("content"),
+      textFromSelectors($, [
+        "#viewad-title",
+        "#viewad-main h1",
+        "#viewad-product h1",
+        "main h1",
+        "h1"
+      ]),
       jsonLdTitle,
-      $("meta[property='og:title']").attr("content")
     ) ?? "Kleinanzeigen listing";
   const description =
     pickFirstString(
@@ -565,22 +814,36 @@ export function parseKleinanzeigenHtml(html: string, sourceUrl: string): ScrapeL
   const priceText =
     pickFirstString(
       textFromSelectors($, ["#viewad-price", ".boxedarticle--price"]),
-      cleanInlineText($("meta[itemprop='price']").attr("content")),
+      firstRegexCapture(html, [
+        /adPrice:\s*([0-9]+(?:\.[0-9]+)?)/i,
+        /"ad_price":"([0-9]+(?:\.[0-9]+)?)"/i,
+        /"ExactPreis":"([0-9]+(?:\.[0-9]+)?)"/i
+      ]),
       typeof listingNode?.price === "number"
         ? String(listingNode.price)
         : listingNode?.price?.amount?.toString?.() ??
             listingNode?.price?.value?.toString?.() ??
-            listingNode?.price
+            listingNode?.price,
+      cleanInlineText($("meta[itemprop='price']").attr("content"))
     ) ?? "0 EUR";
   const priceAmount = parsePrice(priceText);
   const locationText =
     pickFirstString(
-      textFromSelectors($, ["#viewad-locality", "[data-testid='vip-ad-location']", ".boxedarticle--details--address"]),
       listingNode?.location?.name,
       listingNode?.adLocation?.displayName,
-      $("meta[property='og:locality']").attr("content")
+      $("meta[property='og:locality']").attr("content"),
+      textFromSelectors($, [
+        "#viewad-locality",
+        "[data-testid='vip-ad-location']",
+        ".boxedarticle--details--address"
+      ]),
+      firstRegexCapture(html, [/"l2_location_name":"([^"]+)"/i, /"selected_location_name":"([^"]+)"/i])
     ) ?? null;
   const domAttributes = extractDetailAttributes($, description);
+  const attributes = {
+    ...analyticsAttributes,
+    ...domAttributes
+  };
   const extractedImages = extractMainImages($, title);
   const images =
     extractedImages.length > 0
@@ -596,25 +859,26 @@ export function parseKleinanzeigenHtml(html: string, sourceUrl: string): ScrapeL
       .get(),
     ...$(".breadcrump-link")
       .map((_, element) => $(element).text())
-      .get()
+      .get(),
+    ...analyticsCategoryPath
   ]);
   const publishedAt = parsePublishedAt(
     pickFirstString(
-      textFromSelectors($, ["#viewad-extra-info--creation-date", "#viewad-extra-info"]),
       firstRegexCapture(html, [/adCreationDate:\s*'([^']+)'/i, /"adCreationDate"\s*:\s*"([^"]+)"/i]),
-      listingNode?.postedAt
+      listingNode?.postedAt,
+      textFromSelectors($, ["#viewad-extra-info--creation-date", "#viewad-extra-info"])
     )
   );
   const seller = extractSellerSignals($, html, listingNode, locationText);
-  const extractionStrategy = listingNode ? "next_data+dom" : "dom";
+  const extractionStrategy = listingNode ? "next_data+dom+meta" : "dom+meta";
 
   return {
     comparables: [],
     images,
     listing: {
       attributes:
-        Object.keys(domAttributes).length > 0
-          ? domAttributes
+        Object.keys(attributes).length > 0
+          ? attributes
           : Object.fromEntries(
               Object.entries(listingNode?.attributes ?? {}).map(([key, value]) => [key, String(value)])
             ),
@@ -624,8 +888,8 @@ export function parseKleinanzeigenHtml(html: string, sourceUrl: string): ScrapeL
       condition: mapCondition(
         pickFirstString(
           listingNode?.condition,
-          domAttributes.Zustand,
-          domAttributes["Fahrzeugzustand"],
+          attributes.Zustand,
+          attributes["Fahrzeugzustand"],
           description
         )
       ),
@@ -634,7 +898,7 @@ export function parseKleinanzeigenHtml(html: string, sourceUrl: string): ScrapeL
       externalId:
         listingNode?.adId?.toString?.() ??
         listingNode?.id?.toString?.() ??
-        extractExternalId(sourceUrl, "kleinanzeigen") ??
+        expectedExternalId ??
         "unknown",
       locationText,
       marketplace: "kleinanzeigen",
@@ -645,15 +909,18 @@ export function parseKleinanzeigenHtml(html: string, sourceUrl: string): ScrapeL
       title
     },
     parserSignals: buildParserSignals({
-      confidence: listingNode && Object.keys(domAttributes).length > 0 && images.length > 0 ? 0.96 : 0.82,
+      confidence: title && priceAmount > 0 && locationText && images.length > 0 ? 0.97 : 0.84,
       extractionStrategy,
       missingFields: [
         !description && "description",
         !images.length && "images",
         !locationText && "location",
-        !Object.keys(domAttributes).length && "attributes"
+        !Object.keys(attributes).length && "attributes"
       ].filter(Boolean) as string[],
-      warnings: listingNode ? [] : ["No __NEXT_DATA__ payload found; used DOM reconstruction."]
+      warnings: [
+        !listingNode && "No exact __NEXT_DATA__ listing node matched this URL; used DOM/meta reconstruction.",
+        priceAmount === 0 && "Price could not be normalized confidently."
+      ].filter(Boolean) as string[]
     }),
     seller,
     snapshot: {

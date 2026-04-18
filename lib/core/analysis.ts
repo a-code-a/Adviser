@@ -8,6 +8,15 @@ export const priceVerdictSchema = z.enum([
   "high_risk"
 ]);
 
+export const recommendedActionSchema = z.enum([
+  "buy",
+  "negotiate",
+  "verify_first",
+  "walk_away"
+]);
+
+export const generationModeSchema = z.enum(["model", "fallback"]);
+
 const comparableReportSchema = z.object({
   condition: z.string(),
   currency: z.string(),
@@ -32,11 +41,17 @@ export const listingAnalysisSchema = z.object({
     max: z.number().nonnegative(),
     min: z.number().nonnegative()
   }),
+  generationMode: generationModeSchema,
+  modelSlug: z.string(),
+  negotiationAdvice: z.array(z.string()).min(1),
+  priceAssessment: z.string(),
   priceVerdict: priceVerdictSchema,
   questionsToAsk: z.array(z.string()).min(1),
   redFlags: z.array(z.string()).min(1),
+  recommendedAction: recommendedActionSchema,
   riskScore: z.number().int().min(0).max(100),
   sellerAssessment: z.string(),
+  sellerMessageDraft: z.string(),
   summary: z.string(),
   thingsToCheck: z.array(z.string()).min(1)
 });
@@ -90,6 +105,17 @@ export const listingAnalysisJsonSchema = {
       required: ["currency", "max", "min"],
       type: "object"
     },
+    generationMode: {
+      enum: ["model", "fallback"],
+      type: "string"
+    },
+    modelSlug: { type: "string" },
+    negotiationAdvice: {
+      items: { type: "string" },
+      minItems: 1,
+      type: "array"
+    },
+    priceAssessment: { type: "string" },
     priceVerdict: {
       enum: ["very_good_deal", "good_deal", "fair", "overpriced", "high_risk"],
       type: "string"
@@ -104,12 +130,17 @@ export const listingAnalysisJsonSchema = {
       minItems: 1,
       type: "array"
     },
+    recommendedAction: {
+      enum: ["buy", "negotiate", "verify_first", "walk_away"],
+      type: "string"
+    },
     riskScore: {
       maximum: 100,
       minimum: 0,
       type: "integer"
     },
     sellerAssessment: { type: "string" },
+    sellerMessageDraft: { type: "string" },
     summary: { type: "string" },
     thingsToCheck: {
       items: { type: "string" },
@@ -122,11 +153,17 @@ export const listingAnalysisJsonSchema = {
     "comparableItems",
     "confidence",
     "estimatedFairRange",
+    "generationMode",
+    "modelSlug",
+    "negotiationAdvice",
+    "priceAssessment",
     "priceVerdict",
     "questionsToAsk",
     "redFlags",
+    "recommendedAction",
     "riskScore",
     "sellerAssessment",
+    "sellerMessageDraft",
     "summary",
     "thingsToCheck"
   ],

@@ -4,7 +4,7 @@ import { createServer } from "node:http";
 
 import { buildHashEmbedding } from "./embedding";
 import { WorkerRepository } from "./repository";
-import { analyzeBundle } from "./analysis";
+import { analyzeBundle, selectComparableCandidates } from "./analysis";
 import { getMarketplaceAdapter } from "./adapters";
 import { SourceBlockedError } from "./adapters/shared";
 
@@ -203,17 +203,26 @@ async function handleAnalyze(payload: Record<string, any>) {
     bundle.listing.marketplace as MarketplaceName,
     bundle.listing.title
   ).catch(() => []);
+  const comparableCandidates = selectComparableCandidates(
+    bundle.listing,
+    [...internalComparables, ...liveComparables],
+    8
+  );
   const reportResult = await analyzeBundle({
-    comparables: [...internalComparables, ...liveComparables].slice(0, 8),
+    comparables: comparableCandidates,
+    images: bundle.images,
     listing: bundle.listing,
     parserSignals: bundle.parserSignals,
-    seller: bundle.seller
+    seller: bundle.seller,
+    snapshot: bundle.snapshot,
+    target: bundle.target
   });
   const userIds = await repository.getInterestedUserIds(job.listingId);
 
-  await repository.saveComparables(job.listingId, [...internalComparables, ...liveComparables].slice(0, 8));
+  await repository.saveComparables(job.listingId, comparableCandidates);
   await repository.saveAnalysisReports({
     listingId: job.listingId,
+    modelSlug: reportResult.report.modelSlug,
     renderedSummary: reportResult.report.summary,
     report: reportResult.report,
     tokenUsageInput: reportResult.usage.inputTokens,

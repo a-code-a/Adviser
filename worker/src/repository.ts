@@ -365,23 +365,28 @@ export class WorkerRepository {
       throw new Error(listingError.message);
     }
 
-    const [{ data: seller }, { data: snapshot }] = await Promise.all([
+    const [{ data: seller }, { data: snapshot }, { data: target }, { data: images }] = await Promise.all([
       listing?.seller_profile_id
         ? this.supabase.from("seller_profiles").select("*").eq("id", listing.seller_profile_id).maybeSingle()
         : Promise.resolve({ data: null } as const),
       listing?.latest_snapshot_id
         ? this.supabase
             .from("listing_snapshots")
-            .select("parser_signals")
+            .select("id, parser_signals, parser_version, scraped_at, source_url")
             .eq("id", listing.latest_snapshot_id)
             .maybeSingle()
-        : Promise.resolve({ data: null } as const)
+        : Promise.resolve({ data: null } as const),
+      this.supabase.from("crawl_targets").select("*").eq("id", listingId).maybeSingle(),
+      this.supabase.from("listing_images").select("*").eq("listing_id", listingId).order("position")
     ]);
 
     return {
+      images: images ?? [],
       listing,
       parserSignals: snapshot?.parser_signals ?? {},
-      seller
+      seller,
+      snapshot,
+      target
     };
   }
 
@@ -400,6 +405,7 @@ export class WorkerRepository {
 
   async saveAnalysisReports(input: {
     listingId: string;
+    modelSlug: string;
     renderedSummary: string;
     report: Record<string, unknown>;
     tokenUsageInput: number;
@@ -414,6 +420,7 @@ export class WorkerRepository {
     const payload = input.userIds.map((userId) => ({
       created_at: new Date().toISOString(),
       listing_id: input.listingId,
+      model_slug: input.modelSlug,
       rendered_summary: input.renderedSummary,
       report_json: input.report,
       token_usage_input: input.tokenUsageInput,
