@@ -91,6 +91,98 @@ const kleinanzeigenFixture = `
 </html>
 `;
 
+const kleinanzeigenDomFixture = `
+<!doctype html>
+<html lang="de">
+  <head>
+    <title>Audi Q3 F3 2019 S-Line 45 TFSI 230Ps Quattro</title>
+    <meta property="og:title" content="Audi Q3 F3 2019 S-Line 45 TFSI 230Ps Quattro" />
+    <meta property="og:image" content="https://img.kleinanzeigen.de/api/v1/prod-ads/images/06/06400b46-a9f2-4807-b894-7f2b95ef5c67?rule=$_59.JPG" />
+    <meta property="og:locality" content="71397 Leutenbach" />
+    <script>
+      window.BelenConf = {
+        universalAnalyticsOpts: {
+          dimensions: {
+            ad_seller_type: "Private"
+          }
+        }
+      };
+      const config = { adCreationDate: "09.03.2026" };
+      const poster = { posterid:"3934622" };
+    </script>
+  </head>
+  <body>
+    <div id="vap-brdcrmb">
+      <a class="breadcrump-link"><span itemprop="name">Kleinanzeigen</span></a>
+      <a class="breadcrump-link"><span itemprop="name">Auto, Rad &amp; Boot</span></a>
+      <a class="breadcrump-link"><span itemprop="name">Autos</span></a>
+    </div>
+
+    <main>
+      <article id="viewad-product">
+        <div class="galleryimage-element current">
+          <script type="application/ld+json">
+            {
+              "@context": "https://schema.org",
+              "@type": "ImageObject",
+              "title": "Audi Q3 F3 2019 S-Line 45 TFSI 230Ps Quattro",
+              "description": "Audi Q3 F3 S-Line 45 TFSI\\n\\nHubraum: 1984 cm³\\nHU: 2/2027\\nFarbe: Schwarz\\nInnenausstattung: Alcantara\\nAnzahl der Fahrzeughalter: 2",
+              "contentUrl": "https://img.kleinanzeigen.de/api/v1/prod-ads/images/06/06400b46-a9f2-4807-b894-7f2b95ef5c67?rule=$_59.JPG"
+            }
+          </script>
+          <img
+            alt="Audi Q3 Vorschau"
+            data-imgsrc="https://img.kleinanzeigen.de/api/v1/prod-ads/images/30/3008ef51-97b4-4a54-9cbb-199f3bcfe8d5?rule=$_57.AUTO"
+          />
+        </div>
+      </article>
+
+      <section>
+        <h1 id="viewad-title">Audi Q3 F3 2019 S-Line 45 TFSI 230Ps Quattro</h1>
+        <div id="viewad-price">28.000 € VB</div>
+        <div id="viewad-locality">71397 Leutenbach</div>
+        <div id="viewad-extra-info">09.03.2026</div>
+
+        <div id="viewad-details">
+          <div class="addetailslist--detail">
+            <span class="addetailslist--detail--title">Kilometerstand</span>
+            <span class="addetailslist--detail--value">89.500 km</span>
+          </div>
+          <div class="addetailslist--detail">
+            <span class="addetailslist--detail--title">Erstzulassung</span>
+            <span class="addetailslist--detail--value">03/2019</span>
+          </div>
+          <div class="addetailslist--detail">
+            <span class="addetailslist--detail--title">Leistung</span>
+            <span class="addetailslist--detail--value">230 PS</span>
+          </div>
+        </div>
+
+        <div id="viewad-configuration">
+          <span class="checktag">Allradantrieb</span>
+          <span class="checktag">Apple CarPlay</span>
+          <span class="checktag">Sitzheizung</span>
+        </div>
+
+        <div id="viewad-description-text">
+          Gepflegter Audi Q3 aus zweiter Hand.<br />
+          Besichtigung und Probefahrt nach Absprache möglich.
+        </div>
+
+        <aside id="viewad-profile-box">
+          <h2>AP</h2>
+          <a href="/s-bestandsliste.html?userId=3934622">Weitere Anzeigen</a>
+          <span class="userbadge-tag">Freundlich</span>
+          <span class="userbadge-tag">Zuverlässig</span>
+          <p>Mitglied seit 2019</p>
+          <p>Privatanbieter</p>
+        </aside>
+      </section>
+    </main>
+  </body>
+</html>
+`;
+
 describe("marketplace normalization", () => {
   it("detects and normalizes supported URLs", () => {
     const ebay = ensureMarketplaceUrl("https://www.ebay.de/itm/123456789012?_trkparms=test");
@@ -126,6 +218,26 @@ describe("HTML parsers", () => {
     expect(result.listing.priceAmount).toBe(1400);
     expect(result.seller.ratingScore).toBe(4.8);
     expect(result.images[0]?.url).toContain("brompton");
+  });
+
+  it("parses Kleinanzeigen DOM-heavy listing HTML into normalized data", () => {
+    const result = parseKleinanzeigenHtml(
+      kleinanzeigenDomFixture,
+      "https://www.kleinanzeigen.de/s-anzeige/audi-q3-f3-2019-s-line-45-tfsi-230ps-quattro/3347173880-216-8473"
+    );
+
+    expect(result.listing.title).toContain("Audi Q3");
+    expect(result.listing.priceAmount).toBe(28000);
+    expect(result.listing.locationText).toBe("71397 Leutenbach");
+    expect(result.listing.attributes.Kilometerstand).toBe("89.500 km");
+    expect(result.listing.attributes.Ausstattung).toContain("Apple CarPlay");
+    expect(result.listing.description).toContain("Probefahrt");
+    expect(result.seller.externalSellerId).toBe("3934622");
+    expect(result.seller.isCommercial).toBe(false);
+    expect(result.seller.memberSinceText).toContain("2019");
+    expect(result.images).toHaveLength(2);
+    expect(result.listing.publishedAt).toContain("2026-03-09");
+    expect(result.parserSignals.extractionStrategy).toBe("dom");
   });
 });
 

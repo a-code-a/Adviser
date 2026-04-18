@@ -77,8 +77,12 @@ export function parsePrice(value: string | number | null | undefined) {
       cleaned.lastIndexOf(",") > cleaned.lastIndexOf(".")
         ? cleaned.replaceAll(".", "").replace(",", ".")
         : cleaned.replaceAll(",", "");
+  } else if (cleaned.includes(".") && /^\d{1,3}(?:\.\d{3})+(?:-\d+)?$/.test(cleaned)) {
+    normalized = cleaned.replaceAll(".", "");
   } else if (cleaned.includes(",")) {
-    normalized = cleaned.replace(",", ".");
+    normalized = /^\d{1,3}(?:,\d{3})+(?:-\d+)?$/.test(cleaned)
+      ? cleaned.replaceAll(",", "")
+      : cleaned.replace(",", ".");
   }
 
   const parsed = Number.parseFloat(normalized);
